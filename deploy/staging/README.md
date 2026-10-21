@@ -18,7 +18,7 @@ Memory budget (measured): API ≈ 115 MB, Next.js ≈ 160 MB, PostgreSQL ≈ 50 
 ## Artifacts (`migration/release/`, verify with `SHA256SUMS`)
 | File | Content |
 |---|---|
-| `crm-backend-node-1.0.0-rc.1.bundle` | git bundle of the Node repo, branch `release/1.0.0`, tag `v1.0.0-rc.1` |
+| `crm-backend-node-1.0.0-rc.1.bundle` | git bundle of the Node repo: branch `main` at tag `v1.0.0-rc.1` |
 | `crm-frontend-release.bundle` | git bundle of the frontend, branch `release/node-backend-migration`, tag `node-migration-rc.1` |
 | `crm-frontend-staging-<sha>.tgz` | prebuilt staging frontend (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8082`); started with production deps only (verified) |
 
@@ -29,7 +29,7 @@ scp -i <key> migration/release/* ec2-user@<host>:/tmp/crm-release/
 # on EC2
 cd /tmp/crm-release && sha256sum -c SHA256SUMS
 mkdir -p ~/staging && cd ~/staging
-git clone -b release/1.0.0 /tmp/crm-release/crm-backend-node-1.0.0-rc.1.bundle backend
+git clone /tmp/crm-release/crm-backend-node-1.0.0-rc.1.bundle backend && git -C backend checkout -q v1.0.0-rc.1
 cd backend && npm ci --ignore-scripts && npm rebuild @embedded-postgres/linux-x64 && npm run build
 mkdir -p ~/staging/frontend && tar -xzf /tmp/crm-release/crm-frontend-staging-*.tgz -C ~/staging/frontend
 cd ~/staging/frontend && npm ci --omit=dev --ignore-scripts
