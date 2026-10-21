@@ -323,19 +323,20 @@ describe("dashboard summary", () => {
 
 // ======================================================================= SCHEDULER
 describe("follow-up reminder scheduler", () => {
-  it("reminds upcoming, marks overdue MISSED, and is idempotent", async () => {
+  it("reminds upcoming, notifies overdue (still PENDING today), and is idempotent", async () => {
     const add = (d: string) => q("insert into follow_ups (lead_id, agent_id, follow_up_date, status, purpose) values ($1,$2,$3,'PENDING',null) returning id",
       [env.seed.leadA, env.seed.agent1, d]);
     const [up] = await add("2026-10-17 10:10:00");
     const [od] = await add("2026-10-17 09:00:00");
     await add("2026-10-17 12:00:00"); // outside window
-    expect(await runFollowUpReminders(env.ctx.db, env.clock)).toMatchObject({ reminded: 1, missed: 1 });
-    expect(await runFollowUpReminders(env.ctx.db, env.clock)).toMatchObject({ reminded: 1, missed: 0 });
+    expect(await runFollowUpReminders(env.ctx.db, env.clock)).toMatchObject({ reminded: 1, overdue: 1, missed: 0 });
+    expect(await runFollowUpReminders(env.ctx.db, env.clock)).toMatchObject({ reminded: 1, overdue: 1, missed: 0 });
     expect(await q("select type, message, reference_id from notifications order by id")).toEqual([
       { type: "FOLLOW_UP_REMINDER", reference_id: up.id, message: `Follow-up #${up.id} is scheduled for 2026-10-17T10:10. Purpose: Follow-up` },
       { type: "FOLLOW_UP_OVERDUE", reference_id: od.id, message: `Follow-up #${od.id} is overdue. Please complete it.` },
     ]);
-    expect(await q("select status from follow_ups where id = $1", [od.id])).toEqual([{ status: "MISSED" }]);
+    // Approved rule: overdue stays PENDING until the IST due date ends (see business-rules.test.ts R3).
+    expect(await q("select status from follow_ups where id = $1", [od.id])).toEqual([{ status: "PENDING" }]);
     // When the upcoming one becomes overdue, its reminder is marked read.
     env.clock.setIst("2026-10-17T10:20:00");
     await runFollowUpReminders(env.ctx.db, env.clock);

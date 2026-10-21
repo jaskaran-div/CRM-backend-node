@@ -1,13 +1,15 @@
 import { sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { Db } from "../db/pool.js";
-import { rows } from "../db/sqlutil.js";
-import { formatJackson, istNowMicros, jacksonToJavaToString, pgTextToJackson, type Clock } from "../lib/time.js";
+import { NOW_UTC, rows } from "../db/sqlutil.js";
+import { dayStartMicros, formatJackson, istNowMicros, jacksonToJavaToString, pgTextToJackson, type Clock } from "../lib/time.js";
 
 // Port of FollowUpReminderScheduler (every 60 s, Asia/Kolkata):
 //  1. PENDING follow-ups due within the next 15 minutes -> FOLLOW_UP_REMINDER notification.
-//  2. PENDING follow-ups already past due -> mark their reminder read, create FOLLOW_UP_OVERDUE,
-//     set status MISSED.
+//  2. PENDING follow-ups already past due -> mark their reminder read and create FOLLOW_UP_OVERDUE.
+//     They stay PENDING (listed by /api/follow-ups/overdue) for the rest of their due date.
+//  3. PENDING follow-ups whose due DATE has ended in Asia/Kolkata (follow_up_date < today 00:00 IST)
+//     -> status MISSED. (Approved change: Spring marked them MISSED one minute after the due time.)
 // Notifications are de-duplicated on (user_id, type, reference_id) like NotificationService.
 //
 // Safety: disabled unless SCHEDULER_ENABLED=true; a transaction-scoped advisory lock ensures only one
@@ -15,14 +17,17 @@ import { formatJackson, istNowMicros, jacksonToJavaToString, pgTextToJackson, ty
 // the Spring scheduler during cutover cannot duplicate notifications or double-process rows.
 const LOCK_KEY = 0x43524d01; // "CRM" + 1
 
-export async function runFollowUpReminders(db: Db, clock: Clock): Promise<{ reminded: number; missed: number; skipped: boolean }> {
+export interface ReminderResult { reminded: number; overdue: number; missed: number; skipped: boolean }
+
+export async function runFollowUpReminders(db: Db, clock: Clock): Promise<ReminderResult> {
   const nowUs = istNowMicros(clock);
   const now = formatJackson(nowUs);
+  const todayStart = formatJackson(dayStartMicros(now.slice(0, 10)));
   const end = formatJackson(nowUs + 15 * 60 * 1_000_000);
 
   return db.transaction(async (tx) => {
     const lock = await rows<{ ok: boolean }>(tx as unknown as Db, sql`select pg_try_advisory_xact_lock(${LOCK_KEY}) as ok`);
-    if (!lock[0]?.ok) return { reminded: 0, missed: 0, skipped: true };
+    if (!lock[0]?.ok) return { reminded: 0, overdue: 0, missed: 0, skipped: true };
 
     const due = await rows<{ id: number; agent_id: number; follow_up_date: string; purpose: string | null; overdue: boolean }>(
       tx as unknown as Db, sql`
@@ -30,7 +35,7 @@ export async function runFollowUpReminders(db: Db, clock: Clock): Promise<{ remi
       from follow_ups
       where status = 'PENDING' and follow_up_date <= ${end}::timestamp
       for update skip locked`);
-    if (due.length === 0) return { reminded: 0, missed: 0, skipped: false };
+    if (due.length === 0) return { reminded: 0, overdue: 0, missed: 0, skipped: false };
 
     const upcoming = due.filter((f) => !f.overdue);
     const overdue = due.filter((f) => f.overdue);
@@ -63,9 +68,16 @@ export async function runFollowUpReminders(db: Db, clock: Clock): Promise<{ remi
           from od where not exists (select 1 from notifications n
                                     where n.user_id = od.agent_id and n.type = 'FOLLOW_UP_OVERDUE' and n.reference_id = od.id)
         )
-        update follow_ups f set status = 'MISSED' from od where f.id = od.id`);
+        select 1`);
     }
-    return { reminded: upcoming.length, missed: overdue.length, skipped: false };
+
+    // End of the IST due date: PENDING -> MISSED.
+    const missed = await rows(tx as unknown as Db, sql`
+      update follow_ups set status = 'MISSED', updated_at = ${NOW_UTC}
+      where status = 'PENDING' and follow_up_date < ${todayStart}::timestamp
+        and id = any(${ids(due)})
+      returning id`);
+    return { reminded: upcoming.length, overdue: overdue.length, missed: missed.length, skipped: false };
   });
 }
 

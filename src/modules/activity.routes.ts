@@ -3,14 +3,14 @@ import { sql, type SQL } from "drizzle-orm";
 import type { AppContext } from "../context.js";
 import type { CurrentUser } from "../auth/middleware.js";
 import { callLogs, followUps, notes, notifications } from "../db/schema.js";
-import { mapRow, one, returningCols, rows } from "../db/sqlutil.js";
+import { mapRow, one, returningCols, rows, setAndStamp } from "../db/sqlutil.js";
 import { badRequest, forbidden, notFound } from "../lib/errors.js";
 import {
-  CALL_OUTCOMES, CALL_STATUSES, FOLLOW_UP_STATUSES, isClosedLead, OUTCOME_TO_LEAD_STATUS,
+  CALL_OUTCOMES, CALL_STATUSES, FOLLOW_UP_STATUSES, OUTCOME_TO_LEAD_STATUS,
 } from "../lib/enums.js";
 import { enumParam, parseBody, pathId, zEnum, zId, zInt, zLocalDateTime, zStr } from "../lib/validate.js";
 import { dayStartMicros, addDays, formatJackson, istNow, istToday, jacksonToJavaToString } from "../lib/time.js";
-import { activelyAssignedTo, checkAgent, cleanDetail, isLeadAssignedTo, loadFacts } from "./shared.js";
+import { activelyAssignedTo, releaseIfClosing, checkAgent, cleanDetail, isLeadAssignedTo, loadFacts } from "./shared.js";
 
 // Ownership rules for AGENT are those of CallLogService / FollowUpService / NoteService, ported
 // unchanged. Authorization failures that Spring reported as 400 now return 403 (same message).
@@ -84,7 +84,6 @@ export function activityRoutes(ctx: AppContext): Router {
    */
   async function writeCall(b: CallBody, existingId: number | null) {
     const newStatus = b.callOutcome ? OUTCOME_TO_LEAD_STATUS[b.callOutcome] ?? null : null;
-    const closing = newStatus != null && isClosedLead(newStatus);
     const values = sql`${b.leadId}, ${b.agentId}, ${b.callStartTime}::timestamp, ${b.callEndTime}::timestamp,
       ${b.durationSeconds}::int, ${b.callStatus}, ${b.callOutcome}, ${b.remarks}, ${b.education}, ${b.interestedArea}, ${b.city}`;
     const save = existingId == null
@@ -96,17 +95,15 @@ export function activityRoutes(ctx: AppContext): Router {
     const row = await one(db, sql`
       with saved as (${save}),
       lead as (
-        update leads set
-          education = coalesce(${cleanDetail(b.education)}, education),
-          interested_area = coalesce(${cleanDetail(b.interestedArea)}, interested_area),
-          city = coalesce(${cleanDetail(b.city)}, city),
-          status = coalesce(${newStatus}, status)
+        update leads set ${setAndStamp([
+          ["education", sql`coalesce(${cleanDetail(b.education)}::text, education)`],
+          ["interested_area", sql`coalesce(${cleanDetail(b.interestedArea)}::text, interested_area)`],
+          ["city", sql`coalesce(${cleanDetail(b.city)}::text, city)`],
+          ["status", sql`coalesce(${newStatus}::text, status)`],
+        ])}
         where id = ${b.leadId}
       ),
-      deact as (
-        update lead_assignments set status = 'INACTIVE'
-        where ${closing} and lead_id = ${b.leadId} and status = 'ACTIVE'
-      )
+      ${releaseIfClosing(newStatus, sql`${b.leadId}::bigint`)}
       select * from saved`);
     return mapRow(callLogs, row!);
   }
@@ -254,7 +251,7 @@ export function activityRoutes(ctx: AppContext): Router {
           ins.id, false
         from ins where ${pending}
       ),
-      lead as (update leads set status = 'FOLLOW_UP' where ${pending} and id = ${b.leadId})
+      lead as (update leads set ${setAndStamp([["status", sql`'FOLLOW_UP'::text`]])} where ${pending} and id = ${b.leadId})
       select * from ins`);
     res.json(mapRow(followUps, row!));
   });
@@ -286,8 +283,11 @@ export function activityRoutes(ctx: AppContext): Router {
     if (b.agentId == null) throw badRequest("Agent is required");
     if (b.followUpDate == null) throw badRequest("Follow-up date is required");
     const row = await one(db, sql`
-      update follow_ups set lead_id = ${b.leadId}, agent_id = ${b.agentId}, follow_up_date = ${b.followUpDate}::timestamp,
-        purpose = ${b.purpose}, status = ${b.status ?? existing.status}, remarks = ${b.remarks}
+      update follow_ups set ${setAndStamp([
+        ["lead_id", sql`${b.leadId}::bigint`], ["agent_id", sql`${b.agentId}::bigint`],
+        ["follow_up_date", sql`${b.followUpDate}::timestamp`], ["purpose", sql`${b.purpose}::text`],
+        ["status", sql`${b.status ?? existing.status}::text`], ["remarks", sql`${b.remarks}::text`],
+      ])}
       where id = ${id} returning ${returningCols(followUps)}`);
     res.json(mapRow(followUps, row!));
   });
@@ -296,7 +296,7 @@ export function activityRoutes(ctx: AppContext): Router {
     const id = pathId(req.params.id);
     const status = enumParam(req.query.status, FOLLOW_UP_STATUSES, "status");
     await loadFollowUpForWrite(id, req.user!, "update");
-    const row = await one(db, sql`update follow_ups set status = ${status} where id = ${id} returning ${returningCols(followUps)}`);
+    const row = await one(db, sql`update follow_ups set ${setAndStamp([["status", sql`${status}::text`]])} where id = ${id} returning ${returningCols(followUps)}`);
     res.json(mapRow(followUps, row!));
   });
 

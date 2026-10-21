@@ -4,8 +4,13 @@ import type { AppContext } from "../context.js";
 import { requireRoles } from "../auth/middleware.js";
 import { hashPassword } from "../auth/password.js";
 import { campaigns, courses, teams, users, type User } from "../db/schema.js";
-import { one, rows } from "../db/sqlutil.js";
-import { badRequest, conflict } from "../lib/errors.js";
+import { NOW_UTC, one, rows } from "../db/sqlutil.js";
+import type { SQL } from "drizzle-orm";
+
+/** updated_at value for Drizzle .set(): now when the row's values change, otherwise unchanged. */
+const stampIfChanged = (current: SQL, next: SQL) =>
+  sql<string>`case when ${current} is distinct from ${next} then ${NOW_UTC} else updated_at end`;
+import { badRequest, conflict, pgCode } from "../lib/errors.js";
 import { CAMPAIGN_STATUSES, COURSE_STATUSES, ROLES, TEAM_STATUSES, USER_STATUSES } from "../lib/enums.js";
 import { parseBody, pathId, zEnum, zId, zInt, zLocalDate, zStr } from "../lib/validate.js";
 import { isBlank } from "./shared.js";
@@ -25,7 +30,7 @@ async function guardFk<T>(p: Promise<T>, message: string): Promise<T> {
   try {
     return await p;
   } catch (e) {
-    if ((e as { code?: string }).code === "23503") throw badRequest(message);
+    if (pgCode(e) === "23503") throw badRequest(message);
     throw e;
   }
 }
@@ -79,7 +84,7 @@ export function catalogRoutes(ctx: AppContext): Router {
       ctx.userCache.invalidateAll();
       res.json(userJson(u!));
     } catch (e) {
-      if ((e as { code?: string }).code === "23505") throw badRequest("User email already exists");
+      if (pgCode(e) === "23505") throw badRequest("User email already exists");
       throw e;
     }
   });
@@ -206,7 +211,7 @@ export function catalogRoutes(ctx: AppContext): Router {
     try {
       return await p;
     } catch (e) {
-      if ((e as { code?: string }).code === "23505") throw badRequest("A course with this name already exists");
+      if (pgCode(e) === "23505") throw badRequest("A course with this name already exists");
       throw e;
     }
   };
@@ -227,6 +232,8 @@ export function catalogRoutes(ctx: AppContext): Router {
     const [c] = await uniqueCourse(db.update(courses).set({
       courseName: b.courseName!, description: b.description, durationMonths: b.durationMonths,
       ...(b.status != null ? { status: b.status } : {}),
+      updatedAt: stampIfChanged(sql`row(course_name, description, duration_months, status)`,
+        sql`row(${b.courseName}::text, ${b.description}::text, ${b.durationMonths}::int, coalesce(${b.status}::text, status))`),
     }).where(eq(courses.id, id)).returning());
     if (!c) throw badRequest("Course not found");
     res.json(c);
@@ -284,6 +291,9 @@ export function catalogRoutes(ctx: AppContext): Router {
     const [c] = await courseFk(db.update(campaigns).set({
       campaignName: b.campaignName!, description: b.description, source: b.source, courseId: b.courseId,
       startDate: b.startDate, endDate: b.endDate, ...(b.status != null ? { status: b.status } : {}),
+      updatedAt: stampIfChanged(sql`row(campaign_name, description, source, course_id, start_date, end_date, status)`,
+        sql`row(${b.campaignName}::text, ${b.description}::text, ${b.source}::text, ${b.courseId}::bigint,
+          ${b.startDate}::date, ${b.endDate}::date, coalesce(${b.status}::text, status))`),
     }).where(eq(campaigns.id, id)).returning());
     if (!c) throw badRequest("Campaign not found");
     res.json(c);
@@ -293,7 +303,7 @@ export function catalogRoutes(ctx: AppContext): Router {
   r.delete("/api/campaigns/:id", management, async (req, res) => {
     const id = pathId(req.params.id);
     const deleted = await rows(db, sql`
-      with unlink as (update leads set campaign_id = null where campaign_id = ${id} returning id)
+      with unlink as (update leads set campaign_id = null, updated_at = ${NOW_UTC} where campaign_id = ${id} returning id)
       delete from campaigns where id = ${id} returning id`);
     if (deleted.length === 0) throw badRequest("Campaign not found");
     // Spring's void handler: 200 with an empty body.

@@ -6,6 +6,13 @@ import type { ErrorRequestHandler, RequestHandler } from "express";
 // Unlike Spring, unexpected errors never echo internal exception text (SQL, stack details).
 export type Envelope = "error" | "message";
 
+/** SQLSTATE of a Postgres error, also when wrapped (Drizzle puts the driver error in `cause`). */
+export function pgCode(err: unknown): string | undefined {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | undefined;
+  const code = typeof e?.code === "string" ? e.code : typeof e?.cause?.code === "string" ? e.cause.code : undefined;
+  return code && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
+}
+
 export class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -44,7 +51,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
   // Postgres constraint violations: report the kind, not the SQL detail.
-  const code: string | undefined = err?.code;
+  const code = pgCode(err);
   if (code === "23505") {
     res.status(400).json({ error: "A record with the same unique value already exists" });
     return;

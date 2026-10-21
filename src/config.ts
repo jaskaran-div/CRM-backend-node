@@ -12,7 +12,9 @@ const schema = z.object({
   DB_URL: z.string().min(1),
   DB_USERNAME: z.string().min(1).optional(),
   DB_PASSWORD: z.string().min(1).optional(),
-  DB_POOL_MAX: z.coerce.number().int().min(1).max(50).default(6),
+  // Supabase session pooler: 15 server connections per role, shared with any other process using
+  // the same role (live Spring Hikari = 10 during the parallel run). 5 keeps the sum within 15.
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(50).default(5),
   DB_SSL: z.enum(["require", "disable"]).default("require"),
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(15000),
 

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AppContext } from "../context.js";
 import { requireRoles } from "../auth/middleware.js";
 import { leadAssignments } from "../db/schema.js";
-import { mapRow, one, returningCols, rows } from "../db/sqlutil.js";
+import { mapRow, one, returningCols, rows, setAndStamp } from "../db/sqlutil.js";
 import { badRequest, forbidden, notFound } from "../lib/errors.js";
 import { ASSIGNMENT_STATUSES, isClosedLead } from "../lib/enums.js";
 import { enumParam, parseBody, pathId, zId } from "../lib/validate.js";
@@ -194,7 +194,7 @@ export function assignmentRoutes(ctx: AppContext): Router {
       with old as (
         update lead_assignments set status = 'INACTIVE' where lead_id = ${leadId} and status = 'ACTIVE' returning id
       ),
-      reopen as (update leads set status = 'NEW' where id = ${leadId} returning id)
+      reopen as (update leads set ${setAndStamp([["status", sql`'NEW'::text`]])} where id = ${leadId} returning id)
       insert into lead_assignments (lead_id, agent_id, team_id, status)
       values (${leadId}, ${b.newAgentId}, ${b.newTeamId}::bigint, 'ACTIVE')
       returning ${returningCols(leadAssignments)}`);

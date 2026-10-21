@@ -1,7 +1,7 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/pool.js";
 import { leadAssignments, leads } from "../db/schema.js";
-import { mapRow, one, returningCols, rows } from "../db/sqlutil.js";
+import { mapRow, one, returningCols, rows, setAndStamp } from "../db/sqlutil.js";
 import { badRequest, forbidden, notFound } from "../lib/errors.js";
 import { isClosedLead, type LeadStatus } from "../lib/enums.js";
 import type { CurrentUser } from "../auth/middleware.js";
@@ -79,6 +79,16 @@ export async function isLeadAssignedTo(db: Db, leadId: number | null, agentId: n
 }
 
 /**
+ * CTE "rel": when `status` is a closing status (ENROLLED, NOT_INTERESTED, LOST, WRONG_NUMBER),
+ * deactivate the lead's ACTIVE assignment. Shared by every path that can close a lead (status
+ * endpoints, admin edit form, agent details form, call outcomes) so they follow one rule.
+ */
+export function releaseIfClosing(status: string | null | undefined, leadIdExpr: SQL): SQL {
+  if (!isClosedLead(status)) return sql`rel as (select 1)`;
+  return sql`rel as (update lead_assignments set status = 'INACTIVE' where lead_id = ${leadIdExpr} and status = 'ACTIVE')`;
+}
+
+/**
  * LeadService.updateLeadStatus as one atomic statement: set the status and, for a closing status
  * (ENROLLED, NOT_INTERESTED, LOST, WRONG_NUMBER), deactivate the active assignment.
  * Agents may only change leads actively assigned to them.
@@ -92,7 +102,7 @@ export async function updateLeadStatus(db: Db, user: CurrentUser, leadId: number
       from leads l where l.id = ${leadId}
     ),
     upd as (
-      update leads set status = ${status}
+      update leads set ${setAndStamp([["status", sql`${status}::text`]])}
       where id = (select id from target where allowed)
       returning ${returningCols(leads)}
     ),

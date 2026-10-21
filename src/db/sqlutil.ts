@@ -10,6 +10,24 @@ import type { Db } from "./pool.js";
 // These helpers let raw SQL return rows in the same camelCase shape (and Jackson date format) as
 // Drizzle's typed queries. Identifiers come from the schema definitions, never from input.
 
+/**
+ * Current time as a naive UTC timestamp — the same convention as the DB defaults of created_at /
+ * updated_at (CURRENT_TIMESTAMP in a UTC session). Used to stamp updated_at on every modification.
+ */
+export const NOW_UTC = sql`(now() at time zone 'UTC')`;
+
+/**
+ * SET-list fragment `col = value, …, updated_at = <now if anything changed else unchanged>`.
+ * updated_at only moves on a real modification, so re-saving a closed lead without changes keeps
+ * its closure time (the closed-leads report dates closures by updated_at).
+ */
+export function setAndStamp(assignments: [column: string, value: SQL][]): SQL {
+  const sets = assignments.map(([c, v]) => sql`${sql.identifier(c)} = ${v}`);
+  const cols = sql.join(assignments.map(([c]) => sql.identifier(c)), sql`, `);
+  const vals = sql.join(assignments.map(([, v]) => v), sql`, `);
+  return sql`${sql.join(sets, sql`, `)}, updated_at = case when row(${cols}) is distinct from row(${vals}) then ${NOW_UTC} else updated_at end`;
+}
+
 /** `"alias"."col" AS "key", ...` for every column of a table. */
 export function selectCols(table: PgTable, alias?: string): SQL {
   const prefix = alias ?? getTableName(table);

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/pool.js";
 import { agentAttendance, agentBreaks, type AgentAttendance, type AgentBreak } from "../db/schema.js";
 import { mapJsonRow, mapRow, one, returningCols, selectCols } from "../db/sqlutil.js";
@@ -23,6 +23,12 @@ const LIMITS: Partial<Record<BreakType, number>> = { LUNCH: LUNCH_LIMIT_SECONDS,
 const LABELS: Partial<Record<BreakType, string>> = { LUNCH: "Lunch Break", TEA: "Tea Break", BIO: "Bio Break" };
 const NORMAL_TYPES = new Set(["NORMAL", "LUNCH", "TEA", "BIO"]);
 
+/** SET-list ending a break at `t`: end = max(t, start), duration = whole seconds (AgentBreakService.closeBreak). */
+const closeBreakAt = (t: SQL, alias = "") => {
+  const st = sql.raw(alias ? `${alias}.start_time` : "start_time");
+  return sql`end_time = greatest(${t}, ${st}), duration_seconds = floor(extract(epoch from greatest(${t}, ${st}) - ${st}))::bigint`;
+};
+
 // ---------------------------------------------------------------- attendance
 
 /** AgentAttendanceService.recordLogin — one statement. */
@@ -42,6 +48,11 @@ export async function recordLogin(db: Db, agentId: number, clock: Clock): Promis
       from open o where a.id = o.id and o.attendance_date <> ${today}::date
       returning a.id
     ),
+    close_stale_break as (
+      update agent_breaks b set ${closeBreakAt(sql`(o.attendance_date + 1)::timestamp`, "b")}
+      from open o
+      where o.attendance_date <> ${today}::date and b.attendance_id = o.id and b.agent_id = ${agentId} and b.end_time is null
+    ),
     ins as (
       insert into agent_attendance (agent_id, attendance_date, login_time, logout_time, created_at, updated_at)
       select ${agentId}, ${today}::date, ${now}::timestamp, null, ${utc}::timestamp, ${utc}::timestamp
@@ -56,12 +67,24 @@ export async function recordLogin(db: Db, agentId: number, clock: Clock): Promis
 }
 
 /** AgentAttendanceService.recordLogout — closes the latest open session. */
+/**
+ * AgentAttendanceService.recordLogout + approved change: an active break of the session being
+ * closed ends at the logout time (Spring left it open, so it kept counting until midnight).
+ */
 export async function recordLogout(db: Db, agentId: number, clock: Clock): Promise<AgentAttendance> {
+  const now = sql`${formatJackson(istNowMicros(clock))}::timestamp`;
   const r = await one(db, sql`
-    update agent_attendance set logout_time = ${formatJackson(istNowMicros(clock))}::timestamp, updated_at = ${utcNow(clock)}::timestamp
-    where id = (select id from agent_attendance where agent_id = ${agentId} and logout_time is null
-                order by login_time desc limit 1)
-    returning ${returningCols(agentAttendance)}`);
+    with att as (
+      update agent_attendance set logout_time = ${now}, updated_at = ${utcNow(clock)}::timestamp
+      where id = (select id from agent_attendance where agent_id = ${agentId} and logout_time is null
+                  order by login_time desc limit 1)
+      returning ${returningCols(agentAttendance)}
+    ),
+    end_break as (
+      update agent_breaks b set ${closeBreakAt(now, "b")}
+      from att where b.agent_id = att."agentId" and b.attendance_id = att.id and b.end_time is null
+    )
+    select * from att`);
   if (!r) throw badRequest("No active attendance session found.");
   return mapRow(agentAttendance, r);
 }
@@ -77,10 +100,11 @@ export async function getTodayAttendance(db: Db, agentId: number, clock: Clock):
 // ---------------------------------------------------------------- break durations
 
 /** AgentBreakService.getEffectiveDuration (used for limits and the agent summary). */
-export function serviceDuration(b: AgentBreak, nowUs: number): number {
+export function serviceDuration(b: AgentBreak, nowUs: number, logoutTime: string | null = null): number {
   if (b.durationSeconds != null) return Math.max(0, b.durationSeconds);
   const start = micros(b.startTime);
-  const end = b.endTime == null ? nowUs : micros(b.endTime);
+  // An open break on a logged-out session (data written before logout ended breaks) stops at logout.
+  const end = b.endTime != null ? micros(b.endTime) : logoutTime != null ? Math.min(micros(logoutTime), nowUs) : nowUs;
   return Math.max(0, secondsBetween(start, end));
 }
 
@@ -90,7 +114,7 @@ export function serviceDuration(b: AgentBreak, nowUs: number): number {
  * The controller's separate branch for active normal breaks yields the same result, so one
  * function serves both.
  */
-export function adminDuration(b: AgentBreak, attendanceDate: string, nowUs: number, today: string): number {
+export function adminDuration(b: AgentBreak, attendanceDate: string, nowUs: number, today: string, logoutTime: string | null = null): number {
   const dayStart = dayStartMicros(attendanceDate);
   const dayEnd = dayStartMicros(addDays(attendanceDate, 1));
   let start = micros(b.startTime);
@@ -98,6 +122,7 @@ export function adminDuration(b: AgentBreak, attendanceDate: string, nowUs: numb
   if (start >= dayEnd) return 0;
   let end: number;
   if (b.endTime != null) end = micros(b.endTime);
+  else if (logoutTime != null) end = micros(logoutTime); // open break on a closed session: stop at logout
   else if (attendanceDate < today) end = dayEnd;
   else end = nowUs;
   if (end > dayEnd) end = dayEnd;
@@ -220,7 +245,8 @@ export async function getBreakSummary(db: Db, agentId: number, clock: Clock) {
   const state = await loadBreakState(db, agentId, { date: today });
   if (!state.attendance) throw conflict("No attendance record found for today.", "message");
   const nowUs = istNowMicros(clock);
-  const used = (t: string) => state.breaks.filter((b) => b.breakType === t).reduce((s, b) => s + serviceDuration(b, nowUs), 0);
+  const logoutTime = state.attendance.logoutTime;
+  const used = (t: string) => state.breaks.filter((b) => b.breakType === t).reduce((s, b) => s + serviceDuration(b, nowUs, logoutTime), 0);
   const lunch = used("LUNCH"), tea = used("TEA"), bio = used("BIO"), legacy = used("NORMAL");
   const normalUsed = lunch + tea + bio + legacy;
   const active = state.activeBreak && state.activeBreak.attendanceId === state.attendance.id ? state.activeBreak : null;
@@ -230,7 +256,7 @@ export async function getBreakSummary(db: Db, agentId: number, clock: Clock) {
     exceptionUsedSeconds: used("EXCEPTION"),
     activeBreakStartTime: active ? formatJavaToString(micros(active.startTime)) : null,
     activeBreakType: active ? active.breakType : null,
-    activeBreakElapsedSeconds: active ? serviceDuration(active, nowUs) : 0,
+    activeBreakElapsedSeconds: active ? serviceDuration(active, nowUs, logoutTime) : 0,
     lunchUsedSeconds: lunch,
     lunchRemainingSeconds: Math.max(0, LUNCH_LIMIT_SECONDS - lunch),
     teaUsedSeconds: tea,
@@ -283,8 +309,8 @@ export function attendanceRow(x: AttendanceWithBreaks, clock: Clock) {
   const { attendance: a, breaks } = x;
   const nowUs = istNowMicros(clock);
   const today = istToday(clock);
-  const normal = breaks.filter((b) => NORMAL_TYPES.has(b.breakType)).reduce((s, b) => s + adminDuration(b, a.attendanceDate, nowUs, today), 0);
-  const exception = breaks.filter((b) => b.breakType === "EXCEPTION").reduce((s, b) => s + adminDuration(b, a.attendanceDate, nowUs, today), 0);
+  const normal = breaks.filter((b) => NORMAL_TYPES.has(b.breakType)).reduce((s, b) => s + adminDuration(b, a.attendanceDate, nowUs, today, a.logoutTime), 0);
+  const exception = breaks.filter((b) => b.breakType === "EXCEPTION").reduce((s, b) => s + adminDuration(b, a.attendanceDate, nowUs, today, a.logoutTime), 0);
   let active: AgentBreak | null = null;
   if (a.attendanceDate === today && a.logoutTime == null) {
     for (const b of breaks) if (b.endTime == null && (!active || micros(b.startTime) > micros(active.startTime))) active = b;
@@ -309,7 +335,7 @@ export function attendanceDetails(x: AttendanceWithBreaks, clock: Clock) {
   const { attendance: a, breaks } = x;
   const nowUs = istNowMicros(clock);
   const today = istToday(clock);
-  const dur = (b: AgentBreak) => adminDuration(b, a.attendanceDate, nowUs, today);
+  const dur = (b: AgentBreak) => adminDuration(b, a.attendanceDate, nowUs, today, a.logoutTime);
   const normal = breaks.filter((b) => NORMAL_TYPES.has(b.breakType)).reduce((s, b) => s + dur(b), 0);
   const exception = breaks.filter((b) => b.breakType === "EXCEPTION").reduce((s, b) => s + dur(b), 0);
   const gross = grossWorkingSeconds(a, nowUs, today);

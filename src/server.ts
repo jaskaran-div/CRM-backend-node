@@ -14,6 +14,14 @@ async function main() {
   const pool = createPool(config);
   pool.on("error", (err) => logger.error({ err }, "idle database client error"));
   const db = createDb(pool);
+  // Surface connection-slot waits (pooler/role saturation) without logging per request.
+  let reportedRetries = 0;
+  setInterval(() => {
+    if (pool.retries > reportedRetries) {
+      logger.warn({ retries: pool.retries - reportedRetries, poolMax: config.DB_POOL_MAX }, "waited for database connection slots");
+      reportedRetries = pool.retries;
+    }
+  }, 60_000).unref();
 
   const t0 = Date.now();
   const dbInfo = await checkDatabase(pool);
