@@ -1,0 +1,29 @@
+# /etc/systemd/system/derivion-crm-node.service
+# Derivion CRM Node.js backend. Runs ALONGSIDE the Spring service (port 8081) until cutover.
+# Not installed automatically — see README.md "Deployment".
+[Unit]
+Description=Derivion CRM Node.js Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/apps/CRM-backend-node
+# Same secrets file as the Spring service (DB_URL, DB_USERNAME, DB_PASSWORD, JWT_SECRET),
+# plus Node-specific settings.
+EnvironmentFile=/home/ec2-user/.config/derivion/crm.env
+EnvironmentFile=/home/ec2-user/.config/derivion/crm-node.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --max-old-space-size=256 --enable-source-maps dist/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
