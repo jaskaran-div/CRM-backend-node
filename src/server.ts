@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { pino } from "pino";
 import { loadConfig } from "./config.js";
 import { checkDatabase, createDb, createPool } from "./db/pool.js";
