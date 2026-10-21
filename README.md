@@ -59,7 +59,7 @@ The tests never touch production. `test/schema.sql` is a replica of the audited 
 
 ### Approved business-rule changes (2026-10-21)
 
-These are product decisions, not compatibility differences. Spring keeps the old rules, so after a
+WhatsApp greeting on the lead-details page keeps the "ISFT" wording (confirmed). These are product decisions, not compatibility differences. Spring keeps the old rules, so after a
 rollback to Spring they revert to the old behaviour. The data stays compatible either way.
 
 | # | Rule | Spring (old) | Node (new) | Endpoints |
@@ -70,6 +70,7 @@ rollback to Spring they revert to the old behaviour. The data stays compatible e
 | 4 | Logout during a break | Break left open, counted until midnight | Break ends at logout time; stale sessions closed at next login also end their break at that midnight; reports cap open breaks of logged-out sessions at logout (corrects existing data) | `POST /api/auth/logout/{id}`, `POST /api/attendance/logout`, `POST /api/auth/login`, admin attendance, break summary |
 | 5 | Lead created by an agent | Unassigned (agent couldn't see it) | Assigned to the creating agent (ACTIVE, no team); admin/manager creations stay unassigned | `POST /api/leads` |
 | 6 | `updated_at` | Never changed | Set (UTC) whenever a lead/course/campaign/follow-up row's values change; identical re-saves keep it, so a closed lead's `updatedAt` stays its closure time | all writes to those tables |
+| 7 | Lead phone number | Agents could change it via the details form | Only ADMIN/MANAGER can change it (`PUT /api/leads/{id}` or the details form). Agents must re-send the stored value (the frontend field is read-only); a different value → 403, and the column is never written for agents | `PUT /api/agent/leads/{id}/details` |
 
 Limitation (rule 6): `updatedAt` is the last real modification. A closed lead that is edited later moves
 its closure date in the closed-leads report. An exact, immutable closure time would need a `closed_at`

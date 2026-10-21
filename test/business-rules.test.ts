@@ -329,3 +329,41 @@ describe("R6 updated_at reflects real modifications (was: never changed)", () =>
     expect(await leadUpdated(env.seed.leadB)).not.toBe("2026-01-01 00:00:00");
   });
 });
+
+// =================================================================== 7
+describe("R7 only admins and managers can change a lead's phone number (approved 2026-10-21)", () => {
+  const phone = async (id: number) => (await q("select phone from leads where id = $1", [id]))[0].phone;
+  const details = (t: string, id: number, p: string) =>
+    env.request.put(`/api/agent/leads/${id}/details`).set(auth(t)).send({ fullName: "Lead A", phone: p, city: "Pune" });
+
+  it("agent: a different phone is rejected (403) and nothing is saved", async () => {
+    const res = await details(G1, env.seed.leadA, "9111111111");
+    expect([res.status, res.body]).toEqual([403, { error: "Only admins and managers can change a lead's phone number" }]);
+    expect(await phone(env.seed.leadA)).toBe("9000000001");
+    expect(await q("select city from leads where id = $1", [env.seed.leadA])).toEqual([{ city: null }]);
+  });
+
+  it("agent: re-sending the stored phone (what the read-only form does) saves the other fields", async () => {
+    const res = await details(G1, env.seed.leadA, "9000000001");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ phone: "9000000001", city: "Pune" });
+  });
+
+  it("agent save cannot overwrite a phone an admin changed in the meantime", async () => {
+    // The agent's form still holds the old number; the admin changes it first.
+    await env.request.put(`/api/leads/${env.seed.leadA}`).set(auth(A)).send({ fullName: "Lead A", phone: "9555555555" });
+    expect((await details(G1, env.seed.leadA, "9000000001")).status).toBe(403);
+    expect(await phone(env.seed.leadA)).toBe("9555555555");
+  });
+
+  it("admin and manager can change it (edit form and details form)", async () => {
+    expect((await env.request.put(`/api/leads/${env.seed.leadA}`).set(auth(M)).send({ fullName: "Lead A", phone: "9666666666" })).body.phone).toBe("9666666666");
+    expect((await details(A, env.seed.leadA, "9777777777")).body.phone).toBe("9777777777");
+  });
+
+  it("agents still cannot use the admin edit endpoint, and agent-created leads take the phone given at creation", async () => {
+    expect((await env.request.put(`/api/leads/${env.seed.leadA}`).set(auth(G1)).send({ fullName: "Lead A", phone: "9888888888" })).status).toBe(403);
+    const created = await env.request.post("/api/leads").set(auth(G1)).send({ fullName: "New", phone: "9999999999" });
+    expect(created.body.phone).toBe("9999999999");
+  });
+});

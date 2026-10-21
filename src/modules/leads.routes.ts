@@ -164,8 +164,9 @@ export function leadRoutes(ctx: AppContext): Router {
     if (req.body == null || typeof req.body !== "object") throw badRequest("Lead details are required");
     const b = parseBody(detailsShape, req.body);
     const user = req.user!;
-    const pre = await one<{ found: boolean; allowed: boolean; dup: boolean }>(db, sql`
+    const pre = await one<{ found: boolean; allowed: boolean; dup: boolean; phone: string | null }>(db, sql`
       select exists (select 1 from leads where id = ${id}) as found,
+        (select phone from leads where id = ${id}) as phone,
         ${user.role === "AGENT" ? activelyAssignedTo(sql`${id}::bigint`, user.id) : sql`true`} as allowed,
         exists (select 1 from leads where phone = ${b.phone} and id <> ${id}) as dup`);
     if (!pre!.found) throw notFound("Lead not found");
@@ -174,11 +175,16 @@ export function leadRoutes(ctx: AppContext): Router {
     if (pre!.dup) throw badRequest("A lead with this phone number already exists");
     if (b.age != null && (b.age < 1 || b.age > 120)) throw badRequest("Age must be between 1 and 120");
     const phone = javaTrim(b.phone!);
+    // Approved rule (2026-10-21): only ADMIN/MANAGER may change a lead's phone number. The agent form
+    // shows it read-only and re-sends the stored value; anything else from an agent is rejected, and
+    // for agents the column is never written (so a concurrent admin change cannot be overwritten).
+    const agentCaller = user.role === "AGENT";
+    if (agentCaller && phone !== pre!.phone) throw forbidden("Only admins and managers can change a lead's phone number");
     const t = (v: string | null) => sql`${v}::text`;
     const row = await one(db, sql`
       with upd as (
         update leads set ${setAndStamp([
-          ["full_name", t(javaTrim(b.fullName!))], ["email", t(cleanDetail(b.email))], ["phone", t(phone)],
+          ["full_name", t(javaTrim(b.fullName!))], ["email", t(cleanDetail(b.email))], ["phone", agentCaller ? sql`phone` : t(phone)],
           ["age", sql`${b.age}::int`], ["city", t(cleanDetail(b.city))], ["education", t(cleanDetail(b.education))],
           ["current_profession", t(cleanDetail(b.currentProfession))], ["primary_objective", t(cleanDetail(b.primaryObjective))],
           ["trading_investment_experience", t(cleanDetail(b.tradingInvestmentExperience))],
