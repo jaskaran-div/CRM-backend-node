@@ -234,7 +234,7 @@ export function leadRoutes(ctx: AppContext): Router {
       ),
       current_lead as (
         insert into agent_current_leads (agent_id, lead_id, opened_at)
-        select ${user.id}, ${leadId}, CURRENT_TIMESTAMP
+        select ${user.id}, ${leadId}, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
         from ok
         where ok.ok
         on conflict (agent_id)
