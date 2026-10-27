@@ -167,6 +167,14 @@ export const leadViewActivities = pgTable("lead_view_activities", {
   viewedDate: date("viewed_date", { mode: "string" }).notNull(),
 });
 
+
+export const agentCurrentLeads = pgTable("agent_current_leads", {
+  agentId: fk("agent_id").primaryKey(),
+  leadId: fk("lead_id").notNull(),
+  openedAt: ts("opened_at").notNull(),
+});
+
+
 export type User = typeof users.$inferSelect;
 export type Lead = typeof leads.$inferSelect;
 export type LeadAssignment = typeof leadAssignments.$inferSelect;

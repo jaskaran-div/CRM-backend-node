@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { pino } from "pino";
 import { loadConfig } from "./config.js";
 import { checkDatabase, createDb, createPool } from "./db/pool.js";
@@ -34,7 +35,7 @@ async function main() {
     userCache: new UserCache(db, config.USER_CACHE_TTL_MS),
   };
 
-  const stopScheduler = config.SCHEDULER_ENABLED === "true" ? startFollowUpScheduler(db, ctx.clock, logger) : () => {};
+  const stopScheduler = config.SCHEDULER_ENABLED === "true" ? startFollowUpScheduler(db, ctx.clock, logger) : () => { };
   logger.info({ scheduler: config.SCHEDULER_ENABLED === "true" }, "follow-up scheduler");
 
   const server = createApp(ctx).listen(config.PORT, config.HOST, () => {
@@ -49,7 +50,7 @@ async function main() {
     logger.info({ signal }, "shutting down");
     stopScheduler();
     server.close(async () => {
-      await pool.end().catch(() => {});
+      await pool.end().catch(() => { });
       process.exit(0);
     });
     setTimeout(() => process.exit(1), 25_000).unref();

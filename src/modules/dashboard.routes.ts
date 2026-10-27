@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { sql } from "drizzle-orm";
 import type { AppContext } from "../context.js";
-import { one } from "../db/sqlutil.js";
+import { one, rows } from "../db/sqlutil.js";
+import { requireRoles } from "../auth/middleware.js";
 import { LEAD_STATUSES } from "../lib/enums.js";
 import { istToday } from "../lib/time.js";
 
@@ -125,5 +126,32 @@ export function dashboardRoutes(ctx: AppContext): Router {
     });
   });
 
+
+  // GET /api/dashboard/agent-current-leads — ADMIN/MANAGER only
+  r.get(
+    "/api/dashboard/agent-current-leads",
+    requireRoles("ADMIN", "MANAGER"),
+    async (_req, res) => {
+      const currentLeads = await rows(ctx.db, sql`
+        select
+          u.id as "agentId",
+          u.full_name as "agentName",
+          c.lead_id as "leadId",
+          l.full_name as "leadName",
+          c.opened_at as "openedAt"
+        from users u
+        left join agent_current_leads c on c.agent_id = u.id
+        left join leads l on l.id = c.lead_id
+        where u.role = 'AGENT'
+          and u.status = 'ACTIVE'
+        order by u.full_name
+      `);
+
+      res.json(currentLeads);
+    },
+  );
+
+
   return r;
 }
+

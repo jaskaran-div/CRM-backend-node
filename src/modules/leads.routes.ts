@@ -107,11 +107,11 @@ export function leadRoutes(ctx: AppContext): Router {
       ),
       upd as (
         update leads set ${setAndStamp([
-          ["full_name", sql`${b.fullName}::text`], ["email", sql`${b.email}::text`], ["phone", sql`${b.phone}::text`],
-          ["course_interested", sql`${b.courseInterested}::text`], ["lead_source", sql`${b.leadSource}::text`],
-          ["status", sql`coalesce(${b.status}::text, status)`], ["priority", sql`coalesce(${b.priority}::text, priority)`],
-          ["city", sql`${b.city}::text`], ["campaign_id", campaign],
-        ])}
+      ["full_name", sql`${b.fullName}::text`], ["email", sql`${b.email}::text`], ["phone", sql`${b.phone}::text`],
+      ["course_interested", sql`${b.courseInterested}::text`], ["lead_source", sql`${b.leadSource}::text`],
+      ["status", sql`coalesce(${b.status}::text, status)`], ["priority", sql`coalesce(${b.priority}::text, priority)`],
+      ["city", sql`${b.city}::text`], ["campaign_id", campaign],
+    ])}
         where id = ${id} and not (select dup from chk)
         returning ${returningCols(leads)}
       ),
@@ -184,13 +184,13 @@ export function leadRoutes(ctx: AppContext): Router {
     const row = await one(db, sql`
       with upd as (
         update leads set ${setAndStamp([
-          ["full_name", t(javaTrim(b.fullName!))], ["email", t(cleanDetail(b.email))], ["phone", agentCaller ? sql`phone` : t(phone)],
-          ["age", sql`${b.age}::int`], ["city", t(cleanDetail(b.city))], ["education", t(cleanDetail(b.education))],
-          ["current_profession", t(cleanDetail(b.currentProfession))], ["primary_objective", t(cleanDetail(b.primaryObjective))],
-          ["trading_investment_experience", t(cleanDetail(b.tradingInvestmentExperience))],
-          ["customer_looking_for", t(cleanDetail(b.customerLookingFor))], ["interested_area", t(cleanDetail(b.interestedArea))],
-          ["priority", sql`coalesce(${b.priority}::text, priority)`], ["status", sql`coalesce(${b.status}::text, status)`],
-        ])}
+      ["full_name", t(javaTrim(b.fullName!))], ["email", t(cleanDetail(b.email))], ["phone", agentCaller ? sql`phone` : t(phone)],
+      ["age", sql`${b.age}::int`], ["city", t(cleanDetail(b.city))], ["education", t(cleanDetail(b.education))],
+      ["current_profession", t(cleanDetail(b.currentProfession))], ["primary_objective", t(cleanDetail(b.primaryObjective))],
+      ["trading_investment_experience", t(cleanDetail(b.tradingInvestmentExperience))],
+      ["customer_looking_for", t(cleanDetail(b.customerLookingFor))], ["interested_area", t(cleanDetail(b.interestedArea))],
+      ["priority", sql`coalesce(${b.priority}::text, priority)`], ["status", sql`coalesce(${b.status}::text, status)`],
+    ])}
         where id = ${id} and not exists (select 1 from leads where phone = ${phone} and id <> ${id})
         returning ${returningCols(leads)}
       ),
@@ -211,20 +211,50 @@ export function leadRoutes(ctx: AppContext): Router {
   // Records that the agent opened an actively assigned lead today (feeds attended/remaining).
   // viewed_date now uses the Asia/Kolkata date, the same "today" the dashboard counts with
   // (Spring wrote the UTC date, so views between 00:00 and 05:30 IST were not counted).
+
+  // Records the daily lead view and updates the agent's current lead.
   r.post("/api/lead-views/:leadId", async (req, res) => {
     const leadId = pathId(req.params.leadId, "leadId");
     const user = req.user!;
-    if (user.role !== "AGENT") throw forbidden("Only agents can record lead views");
-    const r0 = await one<{ ok: boolean }>(db, sql`
-      with ok as (select ${activelyAssignedTo(sql`${leadId}::bigint`, user.id)} as ok),
+
+    if (user.role !== "AGENT") {
+      throw forbidden("Only agents can record lead views");
+    }
+
+    const result = await one<{ ok: boolean }>(db, sql`
+      with ok as (
+        select ${activelyAssignedTo(sql`${leadId}::bigint`, user.id)} as ok
+      ),
       ins as (
         insert into lead_view_activities (agent_id, lead_id, viewed_date)
-        select ${user.id}, ${leadId}, ${istToday(clock)}::date from ok where ok.ok
+        select ${user.id}, ${leadId}, ${istToday(clock)}::date
+        from ok
+        where ok.ok
         on conflict (agent_id, lead_id, viewed_date) do nothing
+      ),
+      current_lead as (
+        insert into agent_current_leads (agent_id, lead_id, opened_at)
+        select ${user.id}, ${leadId}, CURRENT_TIMESTAMP
+        from ok
+        where ok.ok
+        on conflict (agent_id)
+        do update set
+          lead_id = excluded.lead_id,
+          opened_at = excluded.opened_at
+        returning agent_id
       )
-      select ok from ok`);
-    if (!r0?.ok) throw forbidden("This lead is not actively assigned to you");
-    res.json({ success: true, message: "Lead view recorded", leadId });
+      select ok from ok
+    `);
+
+    if (!result?.ok) {
+      throw forbidden("This lead is not actively assigned to you");
+    }
+
+    res.json({
+      success: true,
+      message: "Lead view recorded",
+      leadId,
+    });
   });
 
   void leadAssignments;
