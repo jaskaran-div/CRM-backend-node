@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { pino } from "pino";
 import { loadConfig } from "./config.js";
 import { checkDatabase, createDb, createPool } from "./db/pool.js";
-import { JwtService } from "./auth/jwt.js";
+import { JwtService, RefreshTokenService } from "./auth/jwt.js";
 import { UserCache } from "./auth/middleware.js";
 import { createApp } from "./app.js";
 import { startFollowUpScheduler } from "./jobs/followUpReminders.js";
@@ -32,6 +32,7 @@ async function main() {
   const ctx: AppContext = {
     config, pool, db, logger, clock: systemClock,
     jwt: new JwtService(config.JWT_SECRET, config.JWT_EXPIRATION_MS),
+    refreshJwt: new RefreshTokenService(config.REFRESH_TOKEN_SECRET, config.REFRESH_TOKEN_EXPIRY_DAYS),
     userCache: new UserCache(db, config.USER_CACHE_TTL_MS),
   };
 

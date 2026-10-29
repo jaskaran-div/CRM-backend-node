@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import { pinoHttp } from "pino-http";
 import type { AppContext } from "./context.js";
 import { authenticate } from "./auth/middleware.js";
@@ -32,11 +33,19 @@ export function createApp(ctx: AppContext): Express {
   // (Spring allowed "*").
   const origins = ctx.config.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
   if (origins.length) {
-    app.use(cors({ origin: origins, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type"], maxAge: 600 }));
+    app.use(cors({ 
+      origin: origins, 
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
+      allowedHeaders: ["Authorization", "Content-Type", "Cookie"], 
+      exposedHeaders: ["Set-Cookie"],
+      credentials: true, 
+      maxAge: 600 
+    }));
   }
 
   // strict:false — some endpoints take a bare JSON string body (e.g. "ENROLLED").
   app.use(express.json({ limit: "1mb", strict: false }));
+  app.use(cookieParser());
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "UP" });

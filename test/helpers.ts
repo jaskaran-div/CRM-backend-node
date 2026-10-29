@@ -4,7 +4,7 @@ import pg from "pg";
 import supertest from "supertest";
 import { inject } from "vitest";
 import { createApp } from "../src/app.js";
-import { JwtService } from "../src/auth/jwt.js";
+import { JwtService, RefreshTokenService } from "../src/auth/jwt.js";
 import { UserCache } from "../src/auth/middleware.js";
 import { loadConfig } from "../src/config.js";
 import type { AppContext } from "../src/context.js";
@@ -12,6 +12,7 @@ import { createDb, createPool } from "../src/db/pool.js";
 import type { Clock } from "../src/lib/time.js";
 
 export const JWT_SECRET = "test-secret-that-is-at-least-32-bytes-long!!";
+export const REFRESH_TOKEN_SECRET = "test-refresh-secret-32-bytes-long!!";
 export const PASSWORD = "Passw0rd!";
 
 /** Mutable clock. Default: 2026-10-17 10:00:00 IST (04:30 UTC). */
@@ -57,6 +58,7 @@ export async function createTestEnv(): Promise<TestEnv> {
     DB_SSL: "disable",
     DB_POOL_MAX: "4",
     JWT_SECRET,
+    REFRESH_TOKEN_SECRET,
     USER_CACHE_TTL_MS: "0",
     LOGIN_RATE_LIMIT_PER_15MIN: "1000",
     BCRYPT_COST: "10",
@@ -66,7 +68,8 @@ export async function createTestEnv(): Promise<TestEnv> {
   const db = createDb(pool);
   const clock = new TestClock();
   const jwt = new JwtService(JWT_SECRET, config.JWT_EXPIRATION_MS);
-  const ctx: AppContext = { config, pool, db, jwt, clock, userCache: new UserCache(db, 0), logger: pino({ level: "silent" }) };
+  const refreshJwt = new RefreshTokenService(REFRESH_TOKEN_SECRET, config.REFRESH_TOKEN_EXPIRY_DAYS);
+  const ctx: AppContext = { config, pool, db, jwt, refreshJwt, clock, userCache: new UserCache(db, 0), logger: pino({ level: "silent" }) };
   const app = createApp(ctx);
   const seed = await resetAndSeed(pool);
   const emails = new Map<number, string>();
@@ -83,7 +86,7 @@ export async function createTestEnv(): Promise<TestEnv> {
 
 export async function resetAndSeed(pool: pg.Pool): Promise<Seed> {
   await pool.query(`truncate users, teams, courses, campaigns, leads, lead_assignments, follow_ups, call_logs, notes,
-    notifications, agent_attendance, agent_breaks, lead_view_activities restart identity cascade`);
+    notifications, agent_attendance, agent_breaks, lead_view_activities, refresh_tokens restart identity cascade`);
   hashCache ??= await bcrypt.hash(PASSWORD, 4);
   const h = hashCache.replace(/^\$2b\$/, "$2a$");
   const u = async (name: string, email: string, role: string, status = "ACTIVE") =>

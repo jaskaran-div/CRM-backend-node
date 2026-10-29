@@ -19,7 +19,12 @@ const schema = z.object({
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(15000),
 
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 bytes (HS256 minimum)"),
-  JWT_EXPIRATION_MS: z.coerce.number().int().positive().default(8 * 60 * 60 * 1000),
+  JWT_EXPIRATION_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+
+  REFRESH_TOKEN_SECRET: z.string().min(32, "REFRESH_TOKEN_SECRET must be at least 32 bytes"),
+  REFRESH_TOKEN_EXPIRY_DAYS: z.coerce.number().int().positive().default(5),
+  COOKIE_SECURE: z.enum(["true", "false"]).default("true"),
+  COOKIE_DOMAIN: z.string().optional(),
 
   // Comma-separated allowlist. Empty = no cross-origin access (same-origin via Nginx).
   CORS_ORIGINS: z.string().default(""),

@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { createHash, randomBytes } from "node:crypto";
 
 // Token compatibility with the Spring backend (jjwt 0.12):
 //  * key = UTF-8 bytes of JWT_SECRET (Keys.hmacShaKeyFor)
@@ -49,5 +50,26 @@ export class JwtService {
     } catch {
       return null;
     }
+  }
+}
+
+export class RefreshTokenService {
+  private readonly expiryMs: number;
+
+  constructor(private readonly secret: string, expiryDays: number) {
+    this.expiryMs = expiryDays * 24 * 60 * 60 * 1000;
+  }
+
+  generateRawToken(): string {
+    // 32 random bytes = 64 hex chars
+    return randomBytes(32).toString("hex");
+  }
+
+  hashToken(raw: string): string {
+    return createHash("sha256").update(raw + this.secret).digest("hex");
+  }
+
+  expiresAt(): Date {
+    return new Date(Date.now() + this.expiryMs);
   }
 }

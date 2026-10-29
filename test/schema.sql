@@ -182,3 +182,21 @@ create table lead_view_activities (
   constraint uq_agent_lead_view_date unique (agent_id, lead_id, viewed_date)
 );
 create index idx_agent_viewed_date on lead_view_activities (agent_id, viewed_date);
+
+create table agent_current_leads (
+  agent_id bigint primary key,
+  lead_id bigint not null,
+  opened_at timestamp not null
+);
+
+-- Refresh tokens for "Remember Me" / 5-day persistent login
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash    VARCHAR(64) NOT NULL UNIQUE,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens (token_hash);

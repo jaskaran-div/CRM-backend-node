@@ -4,7 +4,7 @@
 //
 // Columns that exist in the database but are not part of the Spring entities (users.created_at,
 // call_logs.qa_done_by) are intentionally omitted so responses keep the same shape.
-import { bigint, boolean, customType, date, integer, pgTable, text, varchar } from "drizzle-orm/pg-core";
+import { bigint, boolean, customType, date, integer, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
 import { pgTextToJackson } from "../lib/time.js";
 
 // `timestamp without time zone` as a string in the Jackson LocalDateTime wire format
@@ -175,6 +175,16 @@ export const agentCurrentLeads = pgTable("agent_current_leads", {
 });
 
 
+export const refreshTokens = pgTable("refresh_tokens", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
+  userId: fk("user_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+});
+
+
 export type User = typeof users.$inferSelect;
 export type Lead = typeof leads.$inferSelect;
 export type LeadAssignment = typeof leadAssignments.$inferSelect;
@@ -187,3 +197,4 @@ export type AgentBreak = typeof agentBreaks.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type Course = typeof courses.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
+export type RefreshToken = typeof refreshTokens.$inferSelect;
