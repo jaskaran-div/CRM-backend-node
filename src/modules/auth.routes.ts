@@ -9,7 +9,7 @@ import { getDummyHash, verifyPassword } from "../auth/password.js";
 import { recordLogin, recordLogout } from "./attendance.service.js";
 
 const COOKIE_NAME = "derivion_rt";
-const COOKIE_PATH = "/api/auth/refresh";
+const COOKIE_PATH = "/api/auth";
 
 function setRefreshCookie(res: import("express").Response, raw: string, config: AppContext["config"]): void {
   res.cookie(COOKIE_NAME, raw, {
