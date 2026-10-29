@@ -207,10 +207,114 @@ export function leadRoutes(ctx: AppContext): Router {
     res.json(await activeAssignmentsOf(db, agentId));
   });
 
+
+
+  // ------------------------------------------------------------
+  // /api/lead-views/summary (ADMIN/MANAGER)
+  // Attendance counts for all agents on a selected date.
+  // ------------------------------------------------------------
+  r.get("/api/lead-views/summary", management, async (req, res) => {
+    const date = req.query.date;
+
+    if (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ) {
+      throw badRequest("A valid date is required in YYYY-MM-DD format");
+    }
+
+    const result = await rows(
+      db,
+      sql`
+        select
+          u.id as "agentId",
+          u.full_name as "agentName",
+          count(distinct lva.lead_id)::int as "attendedLeads"
+        from users u
+        left join lead_view_activities lva
+          on lva.agent_id = u.id
+          and lva.viewed_date = ${date}::date
+        where u.role = 'AGENT'
+        group by u.id, u.full_name
+        order by u.full_name
+      `
+    );
+
+    res.json(result);
+  });
+
+
   // ------------------------------------------------------------ /api/lead-views (AGENT)
   // Records that the agent opened an actively assigned lead today (feeds attended/remaining).
   // viewed_date now uses the Asia/Kolkata date, the same "today" the dashboard counts with
   // (Spring wrote the UTC date, so views between 00:00 and 05:30 IST were not counted).
+
+  // Get leads viewed by the logged-in agent on a selected date.
+  r.get("/api/lead-views", async (req, res) => {
+    const user = req.user!;
+
+    if (user.role !== "AGENT") {
+      throw forbidden("Only agents can view their attended leads");
+    }
+
+    const date = req.query.date;
+
+    if (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ) {
+      throw badRequest("A valid date is required in YYYY-MM-DD format");
+    }
+
+    const result = await rows(
+      db,
+      sql`
+        select distinct l.id
+        from lead_view_activities lva
+        inner join leads l on l.id = lva.lead_id
+        where lva.agent_id = ${user.id}
+          and lva.viewed_date = ${date}::date
+          and ${activelyAssignedTo(sql`l.id`, user.id)}
+        order by l.id
+      `
+    );
+
+    res.json(result.map((row) => ({
+      leadId: String(row.id),
+    })));
+  });
+
+
+
+  // Get all leads viewed by agents on a selected date (Admin/Manager).
+  r.get("/api/lead-views/all", management, async (req, res) => {
+    const date = req.query.date;
+
+    if (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ) {
+      throw badRequest("A valid date is required in YYYY-MM-DD format");
+    }
+
+    const result = await rows(
+      db,
+      sql`
+        select distinct l.id
+        from lead_view_activities lva
+        inner join leads l on l.id = lva.lead_id
+        where lva.viewed_date = ${date}::date
+        order by l.id
+      `
+    );
+
+    res.json(
+      result.map((row) => ({
+        leadId: String(row.id),
+      }))
+    );
+  });
+
 
   // Records the daily lead view and updates the agent's current lead.
   r.post("/api/lead-views/:leadId", async (req, res) => {
