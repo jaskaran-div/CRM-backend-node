@@ -9,6 +9,7 @@ import { errorHandler, notFoundHandler } from "./lib/errors.js";
 import { authPublicRoutes, authRoutes } from "./modules/auth.routes.js";
 import { attendanceRoutes } from "./modules/attendance.routes.js";
 import { catalogRoutes } from "./modules/catalog.routes.js";
+import { knowledgeBankRoutes } from "./modules/knowledge-bank.routes.js";
 import { leadRoutes } from "./modules/leads.routes.js";
 import { assignmentRoutes } from "./modules/assignments.routes.js";
 import { activityRoutes } from "./modules/activity.routes.js";
@@ -33,13 +34,13 @@ export function createApp(ctx: AppContext): Express {
   // (Spring allowed "*").
   const origins = ctx.config.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
   if (origins.length) {
-    app.use(cors({ 
-      origin: origins, 
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
-      allowedHeaders: ["Authorization", "Content-Type", "Cookie"], 
+    app.use(cors({
+      origin: origins,
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Authorization", "Content-Type", "Cookie"],
       exposedHeaders: ["Set-Cookie"],
-      credentials: true, 
-      maxAge: 600 
+      credentials: true,
+      maxAge: 600
     }));
   }
 
@@ -58,6 +59,7 @@ export function createApp(ctx: AppContext): Express {
   app.use(catalogRoutes(ctx));
   app.use(leadRoutes(ctx));
   app.use(assignmentRoutes(ctx));
+  app.use(knowledgeBankRoutes(ctx));
   app.use(activityRoutes(ctx));
   app.use(attendanceRoutes(ctx));
 

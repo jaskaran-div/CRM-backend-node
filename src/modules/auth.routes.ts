@@ -9,20 +9,22 @@ import { getDummyHash, verifyPassword } from "../auth/password.js";
 import { recordLogin, recordLogout } from "./attendance.service.js";
 
 const COOKIE_NAME = "derivion_rt";
-const COOKIE_PATH = "/api/auth";
+const COOKIE_PATH = "/";
 
 function setRefreshCookie(res: import("express").Response, raw: string, config: AppContext["config"]): void {
   res.cookie(COOKIE_NAME, raw, {
     httpOnly: true,
     secure: config.COOKIE_SECURE === "true",
-    sameSite: "strict",
+    sameSite: "lax",
     path: COOKIE_PATH,
     maxAge: config.REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
   });
 }
 
 function clearRefreshCookie(res: import("express").Response): void {
-  res.clearCookie(COOKIE_NAME, { path: COOKIE_PATH });
+  res.clearCookie(COOKIE_NAME, { path: "/", sameSite: "lax" });
+  res.clearCookie(COOKIE_NAME, { path: "/api/auth", sameSite: "lax" });
+  res.clearCookie(COOKIE_NAME, { path: "/api/auth/refresh", sameSite: "lax" });
 }
 
 export function authPublicRoutes(ctx: AppContext): Router {
@@ -122,16 +124,37 @@ export function authPublicRoutes(ctx: AppContext): Router {
     res.json({ token: newAccessToken, id: user.id, fullName: user.fullName, email: user.email, role: user.role });
   });
 
+  // POST /api/auth/logout (public - revokes cookie even if access token is expired/missing)
+  r.post("/api/auth/logout", async (req, res) => {
+    const rawToken: string | undefined = req.cookies?.[COOKIE_NAME];
+    if (rawToken) {
+      const hash = refreshJwt.hashToken(rawToken);
+      await db.delete(refreshTokens).where(eq(refreshTokens.tokenHash, hash));
+    }
+    clearRefreshCookie(res);
+    res.type("text/plain").send("Logout attendance recorded successfully.");
+  });
+
   return r;
 }
 
 export function authRoutes(ctx: AppContext): Router {
   const r = Router();
-  r.post("/api/auth/logout/:agentId", async (req, res) => {
-    const agentId = pathId(req.params.agentId, "agentId");
+
+  const performLogout = async (req: import("express").Request, res: import("express").Response, agentId?: number) => {
     const user = req.user!;
-    if (user.role !== "ADMIN" && user.id !== agentId) throw forbidden("You can only record your own logout");
-    await recordLogout(ctx.db, agentId, ctx.clock);
+    if (agentId !== undefined && user.role !== "ADMIN" && user.id !== agentId) {
+      throw forbidden("You can only record your own logout");
+    }
+
+    const targetId = agentId ?? (user.role === "AGENT" ? user.id : undefined);
+    if (targetId !== undefined) {
+      try {
+        await recordLogout(ctx.db, targetId, ctx.clock);
+      } catch {
+        // Non-agents or no active attendance session: continue gracefully
+      }
+    }
 
     // Revoke the refresh token
     const rawToken: string | undefined = req.cookies?.[COOKIE_NAME];
@@ -142,6 +165,18 @@ export function authRoutes(ctx: AppContext): Router {
     clearRefreshCookie(res);
 
     res.type("text/plain").send("Logout attendance recorded successfully.");
+  };
+
+  // POST /api/auth/logout
+  r.post("/api/auth/logout", async (req, res) => {
+    await performLogout(req, res);
   });
+
+  // POST /api/auth/logout/:agentId
+  r.post("/api/auth/logout/:agentId", async (req, res) => {
+    const agentId = pathId(req.params.agentId, "agentId");
+    await performLogout(req, res, agentId);
+  });
+
   return r;
 }

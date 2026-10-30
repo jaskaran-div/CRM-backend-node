@@ -23,6 +23,45 @@ export const activelyAssignedTo = (leadExpr: ReturnType<typeof sql>, agentId: nu
   sql`exists (select 1 from lead_assignments la where la.lead_id = ${leadExpr} and la.status = 'ACTIVE' and la.agent_id = ${agentId})`;
 
 /**
+ * Agents can see leads currently assigned to them or
+ * closed leads whose latest assignment belongs to them.
+ */
+export const visibleToAgent = (
+  leadExpr: ReturnType<typeof sql>,
+  agentId: number
+) => sql`
+  (
+    ${activelyAssignedTo(leadExpr, agentId)}
+    OR
+    (
+      exists (
+        select 1
+        from leads closed_lead
+        where closed_lead.id = ${leadExpr}
+          and upper(closed_lead.status) IN (
+            'ENROLLED',
+            'NOT_INTERESTED',
+            'LOST',
+            'WRONG_NUMBER'
+          )
+      )
+      AND
+      EXISTS (
+        select 1
+        from lead_assignments latest_assignment
+        where latest_assignment.lead_id = ${leadExpr}
+          and latest_assignment.agent_id = ${agentId}
+          and latest_assignment.id = (
+            select MAX(previous_assignment.id)
+            from lead_assignments previous_assignment
+            where previous_assignment.lead_id = ${leadExpr}
+          )
+      )
+    )
+  )
+`;
+
+/**
  * Validation reads used before assignment/call/follow-up writes, fetched in ONE round trip:
  * the lead (status), its active assignment owner, a candidate agent user and a candidate team.
  */

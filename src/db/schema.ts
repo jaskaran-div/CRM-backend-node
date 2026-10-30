@@ -175,7 +175,27 @@ export const agentCurrentLeads = pgTable("agent_current_leads", {
 });
 
 
+export const knowledgeBankItems = pgTable("knowledge_bank_items", {
+  id: id(),
+  userId: fk("user_id").notNull(),
+  title: varchar("title", { length: 200 }).notNull(),
+  category: varchar("category", { length: 50 }).notNull(),
+  content: text("content"),
+  fileName: varchar("file_name", { length: 255 }),
+  fileKey: varchar("file_key", { length: 500 }),
+  fileType: varchar("file_type", { length: 100 }),
+  fileSize: bigint("file_size", { mode: "number" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
 export const refreshTokens = pgTable("refresh_tokens", {
+
+
   id: bigint("id", { mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
   userId: fk("user_id").notNull(),
   tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
@@ -198,3 +218,4 @@ export type Team = typeof teams.$inferSelect;
 export type Course = typeof courses.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type RefreshToken = typeof refreshTokens.$inferSelect;
+export type KnowledgeBankItem = typeof knowledgeBankItems.$inferSelect;

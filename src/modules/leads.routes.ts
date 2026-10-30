@@ -8,13 +8,15 @@ import { badRequest, forbidden, notFound, pgCode } from "../lib/errors.js";
 import { LEAD_STATUSES, PRIORITIES } from "../lib/enums.js";
 import { enumBody, parseBody, pathId, zEnum, zId, zInt, zStr } from "../lib/validate.js";
 import { istToday } from "../lib/time.js";
-import { activeAssignmentsOf, activelyAssignedTo, releaseIfClosing, assertSelfOrManagement, cleanDetail, isBlank, javaTrim, updateLeadStatus } from "./shared.js";
+import { activeAssignmentsOf, activelyAssignedTo, visibleToAgent, releaseIfClosing, assertSelfOrManagement, cleanDetail, isBlank, javaTrim, updateLeadStatus } from "./shared.js";
+
 
 const PHONE_RE = /^\+?[0-9]{10,15}$/;
 const management = requireRoles("ADMIN", "MANAGER");
 
-/** Agents see only leads actively assigned to them. */
-const visibleTo = (u: CurrentUser) => (u.role === "AGENT" ? activelyAssignedTo(sql`l.id`, u.id) : sql`true`);
+/** Agents see their active leads and their own historically assigned closed leads. */
+const visibleTo = (u: CurrentUser) =>
+  u.role === "AGENT" ? visibleToAgent(sql`l.id`, u.id) : sql`true`;
 
 function validateNameAndPhone(fullName: string | null, phone: string | null): void {
   if (isBlank(fullName)) throw badRequest("Lead full name is required");
