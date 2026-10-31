@@ -14,9 +14,13 @@ import { activeAssignmentsOf, activelyAssignedTo, visibleToAgent, releaseIfClosi
 const PHONE_RE = /^\+?[0-9]{10,15}$/;
 const management = requireRoles("ADMIN", "MANAGER");
 
-/** Agents see their active leads and their own historically assigned closed leads. */
-const visibleTo = (u: CurrentUser) =>
-  u.role === "AGENT" ? visibleToAgent(sql`l.id`, u.id) : sql`true`;
+/** Agents see active leads by default; historical closed leads are allowed when explicitly requested. */
+const visibleTo = (u: CurrentUser, includeClosedHistory = false) =>
+  u.role === "AGENT"
+    ? includeClosedHistory
+      ? visibleToAgent(sql`l.id`, u.id)
+      : activelyAssignedTo(sql`l.id`, u.id)
+    : sql`true`;
 
 function validateNameAndPhone(fullName: string | null, phone: string | null): void {
   if (isBlank(fullName)) throw badRequest("Lead full name is required");
@@ -28,13 +32,42 @@ export function leadRoutes(ctx: AppContext): Router {
   const r = Router();
   const { db, clock } = ctx;
 
-  const listLeads = async (user: CurrentUser, extra = sql`true`) =>
-    (await rows(db, sql`select ${selectCols(leads, "l")} from leads l where ${visibleTo(user)} and ${extra} order by l.id`))
-      .map((row) => mapRow(leads, row));
+  const listLeads = async (
+    user: CurrentUser,
+    extra = sql`true`,
+    includeClosedHistory = false
+  ) =>
+    (
+      await rows(
+        db,
+        sql`
+        select ${selectCols(leads, "l")}
+        from leads l
+        where ${visibleTo(user, includeClosedHistory)}
+          and ${extra}
+        order by l.id
+      `
+      )
+    ).map((row) => mapRow(leads, row));
 
   // ------------------------------------------------------------ reads (all roles)
   r.get("/api/leads", async (req, res) => {
     res.json(await listLeads(req.user!));
+  });
+
+  r.get("/api/leads/closed-history", async (req, res) => {
+    res.json(
+      await listLeads(
+        req.user!,
+        sql`upper(l.status) IN (
+        'ENROLLED',
+        'NOT_INTERESTED',
+        'LOST',
+        'WRONG_NUMBER'
+      )`,
+        true
+      )
+    );
   });
 
   // Fixed: Spring returned every lead of the campaign to agents.
@@ -44,8 +77,17 @@ export function leadRoutes(ctx: AppContext): Router {
   });
 
   r.get("/api/leads/:id", async (req, res) => {
-    const [lead] = await listLeads(req.user!, sql`l.id = ${pathId(req.params.id)}`);
+    const includeClosedHistory =
+      req.query.includeClosedHistory === "true";
+
+    const [lead] = await listLeads(
+      req.user!,
+      sql`l.id = ${pathId(req.params.id)}`,
+      includeClosedHistory
+    );
+
     if (!lead) return void res.status(404).end();
+
     res.json(lead);
   });
 

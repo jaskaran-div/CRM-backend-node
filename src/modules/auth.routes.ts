@@ -18,6 +18,7 @@ function setRefreshCookie(res: import("express").Response, raw: string, config: 
     sameSite: "lax",
     path: COOKIE_PATH,
     maxAge: config.REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+    ...(config.COOKIE_DOMAIN ? { domain: config.COOKIE_DOMAIN } : {}),
   });
 }
 
